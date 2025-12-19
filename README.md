@@ -19,3 +19,5 @@ npm run build
 
 This project is automatically deployed to GitHub Pages via GitHub Actions when changes are pushed to the `main` branch.
 
+Live demo: https://aliwagih-ubc.github.io/ibex-ui/
+
