@@ -547,6 +547,14 @@ const ProjectDetailContent = ({ project, activeTab, setActiveTab, onToggleModal 
     // --- New Financials State ---
     const [monthlyFinancials, setMonthlyFinancials] = useState([]);
 
+    // Detailed Task State
+    const [detailedTasks, setDetailedTasks] = useState([
+        { id: 1, name: "01. Preliminaries", qty: 1, rate: 200000, amount: 200000 },
+        { id: 2, name: "02. Design", qty: 4500, rate: 100, amount: 450000 },
+        { id: 3, name: "03. Construction", qty: 1, rate: 550000, amount: 550000 }
+    ]);
+    const [taskForecasts, setTaskForecasts] = useState({}); // { taskId: { month: amount } }
+
     // Initialize/Update Monthly Financials based on Contract Dates
     useEffect(() => {
         if (!contractDates.start || !contractDates.end) return;
@@ -577,29 +585,26 @@ const ProjectDetailContent = ({ project, activeTab, setActiveTab, onToggleModal 
     const graphData = useMemo(() => {
         let cp = 0, ca = 0, cf = 0;
         return monthlyFinancials.map(d => {
+            const isActualized = d.actual !== "" && d.actual !== null && Number(d.actual) > 0;
+            const distForecast = detailedTasks.reduce((sum, t) => sum + (taskForecasts[t.id]?.[d.month] || 0), 0);
+            const computedForecast = isActualized ? Number(d.actual) : distForecast;
+
             cp += Number(d.planned || 0);
             ca += Number(d.actual || 0);
-            cf += Number(d.forecast || 0);
+            cf += computedForecast;
             return {
                 ...d,
+                forecast: computedForecast,
                 cumPlanned: cp,
                 cumActual: ca,
                 cumForecast: cf
             };
         });
-    }, [monthlyFinancials]);
+    }, [monthlyFinancials, detailedTasks, taskForecasts]);
 
     // EVM Inputs
     const [startDate, setStartDate] = useState('2025-01-01');
     const [endDate, setEndDate] = useState('2025-06-30');
-    const [budget, setBudget] = useState(1200000);
-    const [tasks, setTasks] = useState([
-        { id: 1, name: "01. Preliminaries", budget: 200000, pctComplete: 95 },
-        { id: 2, name: "02. Design", budget: 450000, pctComplete: 80 },
-        { id: 3, name: "03. Construction", budget: 550000, pctComplete: 0 }
-    ]);
-
-    // Handlers
     const handleSubCountChange = (val) => {
         const count = parseInt(val) || 0;
         setSubCount(count);
@@ -622,14 +627,16 @@ const ProjectDetailContent = ({ project, activeTab, setActiveTab, onToggleModal 
     };
 
     // Calculate Current EV based on Task Inputs
-    const totalCurrentEV = tasks.reduce((acc, t) => acc + (t.budget * (t.pctComplete / 100)), 0);
+    const initialBudget = detailedTasks.reduce((acc, t) => acc + (t.amount || 0), 0);
+    const currentBudget = detailedTasks.reduce((acc, t) => acc + (t.amount + (t.coAmount || 0)), 0);
+    const totalCurrentEV = detailedTasks.reduce((acc, t) => acc + ((t.amount + (t.coAmount || 0)) * ((t.pctComplete || 0) / 100)), 0);
 
     // Generate EVM Data (Curves + Tables)
     useEffect(() => {
         if (monthlyFinancials.length === 0) return;
 
         // Calculate Total Budget (BAC)
-        const totalBudget = tasks.reduce((acc, t) => acc + t.budget, 0);
+        const totalBudget = detailedTasks.reduce((acc, t) => acc + (t.amount + (t.coAmount || 0)), 0);
 
         // Calculate Cumulative Actuals from Monthly Financials
         let runningAC = 0;
@@ -652,14 +659,14 @@ const ProjectDetailContent = ({ project, activeTab, setActiveTab, onToggleModal 
 
             // EV: Interpolated based on current total % complete of tasks
             // In a real app, EV is snapshots. Here we simulate a curve ending at currentTotalEV
-            const currentTotalEV = tasks.reduce((acc, t) => acc + (t.budget * (t.pctComplete / 100)), 0);
+            const compTotalEV = detailedTasks.reduce((acc, t) => acc + ((t.amount + (t.coAmount || 0)) * ((t.pctComplete || 0) / 100)), 0);
             let earnedValue = null;
 
             // Assume we are at the month corresponding to "today" or last actual entry
             // For this mock, let's say we are at month 3.
             if (i <= 3) {
                 // Distribute current EV roughly over the active months
-                earnedValue = (currentTotalEV / 4) * (i + 1);
+                earnedValue = (compTotalEV / 4) * (i + 1);
             }
 
             // Calculate EAC for historical points
@@ -678,13 +685,13 @@ const ProjectDetailContent = ({ project, activeTab, setActiveTab, onToggleModal 
             };
         });
         setEvData(data);
-    }, [tasks, budget, monthlyFinancials]);
+    }, [detailedTasks, monthlyFinancials]);
 
     // Current Metrics
     const currentAC = 590000; // From Month 3
     const cpi = currentAC > 0 ? (totalCurrentEV / currentAC).toFixed(2) : 0;
     const spi = evData[2]?.pv > 0 ? (totalCurrentEV / evData[2].pv).toFixed(2) : 0;
-    const eac = cpi > 0 ? (budget / cpi).toFixed(0) : 0;
+    const eac = cpi > 0 ? (currentBudget / cpi).toFixed(0) : 0;
     const etc = eac - currentAC;
 
     // Local Logic for "Incomplete Contract"
@@ -769,34 +776,46 @@ const ProjectDetailContent = ({ project, activeTab, setActiveTab, onToggleModal 
                     )}
                 </div>
                 {/* Planned Spend Input Table */}
-                {contractExecuted && (
-                    <div className="mt-8 border-t border-slate-700 pt-6">
-                        <h4 className="font-bold text-white mb-4 text-sm uppercase">Baseline / Planned Spend</h4>
-                        <div className="bg-slate-900 rounded-lg p-4 border border-slate-700 overflow-x-auto">
-                            <p className="text-xs text-slate-400 mb-4">Enter the planned monthly expenditure for the duration of the project.</p>
-                            <div className="flex gap-2">
-                                {monthlyFinancials.map((item, idx) => (
-                                    <div key={idx} className="min-w-[100px]">
-                                        <div className="text-xs font-bold text-slate-500 mb-1">{item.month}</div>
-                                        <input
-                                            type="number"
-                                            className="w-full p-2 bg-slate-800 border border-slate-600 rounded text-sm text-white focus:border-blue-500 outline-none"
-                                            value={item.planned}
-                                            onChange={(e) => {
-                                                const val = Number(e.target.value);
-                                                setMonthlyFinancials(prev => {
-                                                    const copy = [...prev];
-                                                    copy[idx] = { ...copy[idx], planned: val };
-                                                    return copy;
-                                                });
-                                            }}
-                                        />
-                                    </div>
-                                ))}
+                {contractExecuted && (() => {
+                    const totalPlanned = monthlyFinancials.reduce((acc, curr) => acc + Number(curr.planned || 0), 0);
+                    const contractBudget = detailedTasks.reduce((acc, t) => acc + t.amount, 0);
+                    const plannedIsBalanced = totalPlanned === contractBudget;
+                    return (
+                        <div className="mt-8 border-t border-slate-700 pt-6">
+                            <div className="flex justify-between items-center mb-4">
+                                <h4 className="font-bold text-white text-sm uppercase">Baseline / Planned Spend</h4>
+                                <div className={`text-xs font-bold ${plannedIsBalanced ? 'text-emerald-400 bg-emerald-900/30' : 'text-rose-400 bg-rose-900/30'} px-2 py-1 rounded flex items-center gap-1`}>
+                                    {plannedIsBalanced ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />}
+                                    Total: ${totalPlanned.toLocaleString()} / ${contractBudget.toLocaleString()} Budget
+                                </div>
+                            </div>
+                            <div className="bg-slate-900 rounded-lg p-4 border border-slate-700 overflow-x-auto">
+                                <p className="text-xs text-slate-400 mb-4">Enter the planned monthly expenditure for the duration of the project. *Must match original budget amount.</p>
+                                <div className="flex gap-2">
+                                    {monthlyFinancials.map((item, idx) => (
+                                        <div key={idx} className="min-w-[100px]">
+                                            <div className="text-xs font-bold text-slate-500 mb-1">{item.month}</div>
+                                            <input
+                                                type="number"
+                                                className={`w-full p-2 bg-slate-800 border ${plannedIsBalanced ? 'border-slate-600 focus:border-blue-500' : 'border-rose-500/50 focus:border-rose-400'} rounded text-sm text-white outline-none`}
+                                                value={item.planned === 0 ? '' : item.planned}
+                                                placeholder="0"
+                                                onChange={(e) => {
+                                                    const val = e.target.value === '' ? 0 : Number(e.target.value);
+                                                    setMonthlyFinancials(prev => {
+                                                        const copy = [...prev];
+                                                        copy[idx] = { ...copy[idx], planned: val };
+                                                        return copy;
+                                                    });
+                                                }}
+                                            />
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         </div>
-                    </div>
-                )}
+                    );
+                })()}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -1140,77 +1159,6 @@ const ProjectDetailContent = ({ project, activeTab, setActiveTab, onToggleModal 
             </div>
 
             {/* Monthly Financials & Forecasting Section (For ALL Contract Types) */}
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mb-6">
-                <div className="p-6 border-b border-slate-200 bg-slate-50/50">
-                    <h2 className="text-lg font-bold text-slate-900">Monthly Financials & Forecasting</h2>
-                    <p className="text-sm text-slate-500">Track actual spend against baseline and update monthly forecasts.</p>
-                </div>
-                <div className="p-6 space-y-8">
-                    {/* Financials Table */}
-                    <div className="overflow-x-auto border rounded-lg">
-                        <table className="w-full text-sm text-left">
-                            <thead className="bg-slate-100 text-slate-600 font-bold border-b">
-                                <tr>
-                                    <th className="p-3">Month</th>
-                                    <th className="p-3">Baseline / Planned ($)</th>
-                                    <th className="p-3">Actual ($)</th>
-                                    <th className="p-3">Forecast ($)</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100">
-                                {monthlyFinancials.map((item, idx) => (
-                                    <tr key={idx} className="hover:bg-slate-50">
-                                        <td className="p-3 font-medium text-slate-800">{item.month}</td>
-                                        <td className="p-3 text-slate-500">${item.planned ? item.planned.toLocaleString() : '0'}</td>
-                                        <td className="p-3">
-                                            <input
-                                                type="number"
-                                                className="w-28 p-1.5 border rounded text-slate-700"
-                                                placeholder="0"
-                                                value={item.actual}
-                                                onChange={(e) => {
-                                                    const val = Number(e.target.value);
-                                                    setMonthlyFinancials(prev => {
-                                                        const copy = [...prev];
-                                                        copy[idx] = { ...copy[idx], actual: val };
-                                                        return copy;
-                                                    });
-                                                }}
-                                            />
-                                        </td>
-                                        <td className="p-3">
-                                            <input
-                                                type="number"
-                                                className="w-28 p-1.5 border rounded text-slate-700"
-                                                placeholder="0"
-                                                value={item.forecast}
-                                                onChange={(e) => {
-                                                    const val = Number(e.target.value);
-                                                    setMonthlyFinancials(prev => {
-                                                        const copy = [...prev];
-                                                        copy[idx] = { ...copy[idx], forecast: val };
-                                                        return copy;
-                                                    });
-                                                }}
-                                            />
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-
-                    {/* Cashflow Graph */}
-                    <div>
-                        <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                            <Activity size={18} className="text-blue-600" />
-                            Cashflow Graph for {p.name}
-                        </h3>
-                        <CashflowChart data={graphData} />
-                    </div>
-                </div>
-            </div>
-
             {/* Project Change Log Section */}
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mb-6">
                 <div className="p-6 border-b border-slate-200 bg-slate-50/50">
@@ -1296,7 +1244,7 @@ const ProjectDetailContent = ({ project, activeTab, setActiveTab, onToggleModal 
                                 <tfoot className="bg-slate-50 font-bold border-t">
                                     <tr>
                                         <td colSpan="2" className="p-3 text-right text-slate-500">Initial Contract Value:</td>
-                                        <td className="p-3 text-right text-slate-800">${budget.toLocaleString()}</td>
+                                        <td className="p-3 text-right text-slate-800">${initialBudget.toLocaleString()}</td>
                                         <td colSpan="2"></td>
                                     </tr>
                                     <tr>
@@ -1309,7 +1257,7 @@ const ProjectDetailContent = ({ project, activeTab, setActiveTab, onToggleModal 
                                     <tr className="bg-blue-50/50 border-t border-blue-100">
                                         <td colSpan="2" className="p-3 text-right text-blue-900 uppercase text-xs tracking-wider">Adjusted Contract Value:</td>
                                         <td className="p-3 text-right text-blue-700 text-lg">
-                                            ${(budget + changeOrders.filter(c => c.executed).reduce((acc, c) => acc + c.amount, 0)).toLocaleString()}
+                                            ${(initialBudget + changeOrders.filter(c => c.executed).reduce((acc, c) => acc + c.amount, 0)).toLocaleString()}
                                         </td>
                                         <td colSpan="2"></td>
                                     </tr>
@@ -1415,6 +1363,281 @@ const ProjectDetailContent = ({ project, activeTab, setActiveTab, onToggleModal 
 
                 </div>
             </div>
+            {/* Task Breakdown & Forecast Distribution */}
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mb-6">
+                <div className="p-6 border-b border-slate-200 bg-slate-50/50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                    <div>
+                        <h2 className="text-lg font-bold text-slate-900">Task Breakdown & Forecasting</h2>
+                        <p className="text-sm text-slate-500">Defensible forecast distribution by task.</p>
+                    </div>
+                    <div className="text-sm font-bold text-slate-700 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm flex items-center gap-2">
+                        <CheckCircle2 size={16} className="text-emerald-500" />
+                        Contract Budget Total: <span className="text-blue-700">${detailedTasks.reduce((a, c) => a + c.amount, 0).toLocaleString()}</span>
+                    </div>
+                </div>
+                <div className="p-6 space-y-8">
+                    {/* Task Breakdown Table */}
+                    <div>
+                        <h3 className="font-bold text-slate-800 text-sm mb-3">Task Breakdown</h3>
+                        <div className="overflow-x-auto border rounded-lg">
+                            <table className="w-full text-sm text-left">
+                                <thead className="bg-slate-100 text-slate-600 font-bold border-b text-xs">
+                                    <tr>
+                                        <th className="p-3">Task Name</th>
+                                        <th className="p-3 w-20 text-right">Qty</th>
+                                        <th className="p-3 w-24 text-right">Rate ($)</th>
+                                        <th className="p-3 w-24 text-right">Orig. Budget ($)</th>
+                                        <th className="p-3 w-24 text-right">CO Amount ($)</th>
+                                        <th className="p-3 w-24 text-right">Revised Budget ($)</th>
+                                        <th className="p-3 w-20 text-right">% Complete</th>
+                                        <th className="p-3 w-24 text-right">Earned Value ($)</th>
+                                        <th className="p-3 w-10 text-center"></th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {detailedTasks.map((t, i) => (
+                                        <tr key={t.id} className="hover:bg-slate-50 group">
+                                            <td className="p-2">
+                                                <input
+                                                    type="text"
+                                                    className="w-full bg-transparent border border-transparent p-1.5 focus:border-blue-300 focus:bg-white rounded"
+                                                    value={t.name}
+                                                    onChange={(e) => {
+                                                        const copy = [...detailedTasks];
+                                                        copy[i].name = e.target.value;
+                                                        setDetailedTasks(copy);
+                                                    }}
+                                                />
+                                            </td>
+                                            <td className="p-2">
+                                                <input
+                                                    type="number"
+                                                    className="w-full text-right bg-transparent border border-transparent p-1.5 focus:border-blue-300 focus:bg-white rounded"
+                                                    value={t.qty}
+                                                    onChange={(e) => {
+                                                        const copy = [...detailedTasks];
+                                                        copy[i].qty = Number(e.target.value);
+                                                        copy[i].amount = copy[i].qty * copy[i].rate;
+                                                        setDetailedTasks(copy);
+                                                    }}
+                                                />
+                                            </td>
+                                            <td className="p-2">
+                                                <input
+                                                    type="number"
+                                                    className="w-full text-right bg-transparent border border-transparent p-1.5 focus:border-blue-300 focus:bg-white rounded"
+                                                    value={t.rate}
+                                                    onChange={(e) => {
+                                                        const copy = [...detailedTasks];
+                                                        copy[i].rate = Number(e.target.value);
+                                                        copy[i].amount = copy[i].qty * copy[i].rate;
+                                                        setDetailedTasks(copy);
+                                                    }}
+                                                />
+                                            </td>
+                                            <td className="p-3 text-right font-medium text-slate-700">${(t.amount || 0).toLocaleString()}</td>
+                                            <td className="p-2">
+                                                <input
+                                                    type="number"
+                                                    className="w-full text-right bg-transparent border border-transparent p-1.5 focus:border-blue-300 focus:bg-amber-50 text-amber-700 rounded"
+                                                    value={t.coAmount || 0}
+                                                    onChange={(e) => {
+                                                        const copy = [...detailedTasks];
+                                                        copy[i].coAmount = Number(e.target.value);
+                                                        setDetailedTasks(copy);
+                                                    }}
+                                                />
+                                            </td>
+                                            <td className="p-3 text-right font-medium text-blue-700">${((t.amount || 0) + (t.coAmount || 0)).toLocaleString()}</td>
+                                            <td className="p-2 flex items-center justify-end">
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    max="100"
+                                                    className="w-16 text-right bg-transparent border border-transparent p-1.5 focus:border-blue-300 focus:bg-white rounded mr-1"
+                                                    value={t.pctComplete || 0}
+                                                    onChange={(e) => {
+                                                        const copy = [...detailedTasks];
+                                                        copy[i].pctComplete = Number(e.target.value);
+                                                        setDetailedTasks(copy);
+                                                    }}
+                                                />%
+                                            </td>
+                                            <td className="p-3 text-right font-bold text-emerald-600">${(((t.amount || 0) + (t.coAmount || 0)) * ((t.pctComplete || 0) / 100)).toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                                            <td className="p-3 text-center">
+                                                <button
+                                                    className="text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                    onClick={() => setDetailedTasks(detailedTasks.filter((_, idx) => idx !== i))}
+                                                >
+                                                    <X size={14} />
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                                <tfoot className="bg-slate-50 border-t font-bold text-slate-700 text-xs">
+                                    <tr>
+                                        <td colSpan="3" className="p-3 text-right uppercase">Totals:</td>
+                                        <td className="p-3 text-right">${detailedTasks.reduce((acc, t) => acc + (t.amount || 0), 0).toLocaleString()}</td>
+                                        <td className="p-3 text-right text-amber-600">${detailedTasks.reduce((acc, t) => acc + (t.coAmount || 0), 0).toLocaleString()}</td>
+                                        <td className="p-3 text-right text-blue-700">${detailedTasks.reduce((acc, t) => acc + ((t.amount || 0) + (t.coAmount || 0)), 0).toLocaleString()}</td>
+                                        <td className="p-3 text-right text-slate-400">Avg {detailedTasks.length ? (detailedTasks.reduce((acc, t) => acc + (t.pctComplete || 0), 0) / detailedTasks.length).toFixed(1) : 0}%</td>
+                                        <td className="p-3 text-right text-emerald-600">${detailedTasks.reduce((acc, t) => acc + (((t.amount || 0) + (t.coAmount || 0)) * ((t.pctComplete || 0) / 100)), 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                                        <td></td>
+                                    </tr>
+                                    <tr>
+                                        <td colSpan="9" className="p-2 border-t">
+                                            <button
+                                                onClick={() => setDetailedTasks([...detailedTasks, { id: Date.now(), name: "New Task", qty: 1, rate: 0, amount: 0, coAmount: 0, pctComplete: 0 }])}
+                                                className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                                            >
+                                                <Plus size={14} /> Add Task
+                                            </button>
+                                        </td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                    </div>
+
+                    {/* Forecast Distribution Table */}
+                    <div>
+                        <h3 className="font-bold text-slate-800 text-sm mb-3">Monthly Forecast Distribution <span className="font-normal text-slate-500">(Spread remaining budget across schedule)</span></h3>
+                        <div className="overflow-x-auto border rounded-lg">
+                            <table className="w-full text-sm text-left">
+                                <thead className="bg-slate-100 text-slate-600 font-bold border-b">
+                                    <tr>
+                                        <th className="p-3 min-w-[200px]">Task</th>
+                                        {monthlyFinancials.map(m => (
+                                            <th key={m.month} className="p-3 text-center min-w-[110px]">{m.month}</th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {detailedTasks.map(t => (
+                                        <tr key={t.id} className="hover:bg-slate-50">
+                                            <td className="p-3 font-medium text-slate-700 truncate max-w-[200px]">
+                                                {t.name}
+                                            </td>
+                                            {monthlyFinancials.map(m => (
+                                                <td key={m.month} className="p-2">
+                                                    <input
+                                                        type="number"
+                                                        className="w-full p-1.5 border border-slate-200 rounded text-right focus:border-blue-400 focus:ring-1 focus:ring-blue-400 outline-none"
+                                                        placeholder="0"
+                                                        value={taskForecasts[t.id]?.[m.month] === 0 ? '' : (taskForecasts[t.id]?.[m.month] || '')}
+                                                        onChange={(e) => {
+                                                            const val = e.target.value === '' ? '' : Number(e.target.value);
+                                                            setTaskForecasts(prev => ({
+                                                                ...prev,
+                                                                [t.id]: {
+                                                                    ...(prev[t.id] || {}),
+                                                                    [m.month]: val
+                                                                }
+                                                            }))
+                                                        }}
+                                                    />
+                                                </td>
+                                            ))}
+                                        </tr>
+                                    ))}
+                                </tbody>
+                                <tfoot className="bg-slate-50 border-t font-bold">
+                                    <tr>
+                                        <td className="p-3 text-slate-600">Forecast Total</td>
+                                        {monthlyFinancials.map(m => {
+                                            const total = detailedTasks.reduce((sum, t) => sum + (taskForecasts[t.id]?.[m.month] || 0), 0);
+                                            return <td key={m.month} className="p-3 text-right text-blue-700 border-l border-white">${total.toLocaleString()}</td>
+                                        })}
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Monthly Financials & Forecasting Section (For ALL Contract Types) */}
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mb-6">
+                <div className="p-6 border-b border-slate-200 bg-slate-50/50">
+                    <h2 className="text-lg font-bold text-slate-900 flex justify-between items-center">
+                        Monthly Financials Summary
+                        <div className="flex items-center gap-2 text-xs font-medium text-slate-500 bg-white px-2 py-1 rounded border border-slate-200 shadow-sm">
+                            <span className="w-2 h-2 rounded-full bg-blue-500"></span> Acumatica Sync Status: Connected
+                        </div>
+                    </h2>
+                    <p className="text-sm text-slate-500">Actuals sync from Acumatica. Forecast predictions combine actuals mapping and task distribution.</p>
+                </div>
+                <div className="p-6 space-y-8">
+                    {/* Financials Table */}
+                    <div className="overflow-x-auto border rounded-lg">
+                        <table className="w-full text-sm text-left">
+                            <thead className="bg-slate-100 text-slate-600 font-bold border-b">
+                                <tr>
+                                    <th className="p-3">Month</th>
+                                    <th className="p-3">Baseline / Planned ($)</th>
+                                    <th className="p-3">Actual ($)</th>
+                                    <th className="p-3">Forecast / Predicted ($)</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                                {monthlyFinancials.map((item, idx) => {
+                                    const isActualized = item.actual !== "" && item.actual !== null && Number(item.actual) > 0;
+                                    const distForecast = detailedTasks.reduce((sum, t) => sum + (taskForecasts[t.id]?.[item.month] || 0), 0);
+                                    const displayedForecast = isActualized ? Number(item.actual) : distForecast;
+
+                                    return (
+                                        <tr key={idx} className="hover:bg-slate-50">
+                                            <td className="p-3 font-medium text-slate-800 flex items-center gap-2">
+                                                {item.month}
+                                            </td>
+                                            <td className="p-3 text-slate-500">${item.planned ? item.planned.toLocaleString() : '0'}</td>
+                                            <td className="p-3">
+                                                <div className="relative inline-block w-40">
+                                                    <input
+                                                        type="number"
+                                                        className={`w-full p-1.5 pl-8 border rounded font-medium focus:ring-blue-500 focus:border-blue-500 outline-none ${isActualized ? 'border-blue-200 bg-blue-50 text-blue-900' : 'border-slate-200 bg-white text-slate-700'}`}
+                                                        placeholder="0"
+                                                        value={item.actual === 0 ? '' : item.actual}
+                                                        onChange={(e) => {
+                                                            const val = e.target.value === '' ? '' : Number(e.target.value);
+                                                            setMonthlyFinancials(prev => {
+                                                                const copy = [...prev];
+                                                                copy[idx] = { ...copy[idx], actual: val };
+                                                                return copy;
+                                                            });
+                                                        }}
+                                                    />
+                                                    {/* Acumatica Indicator Icon */}
+                                                    <div className="absolute left-2.5 top-2.5 flex items-center justify-center opacity-70">
+                                                        <Activity size={14} className={isActualized ? 'text-blue-600' : 'text-slate-400'} />
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td className="p-3">
+                                                <div className={`p-1.5 px-3 rounded font-medium ${isActualized ? 'text-emerald-700 bg-emerald-50 border-emerald-100 border' : 'text-slate-700 bg-slate-50 border-slate-100 border'} w-40 flex justify-between items-center`}>
+                                                    <span>${displayedForecast.toLocaleString()}</span>
+                                                    {isActualized && <CheckCircle2 size={14} className="text-emerald-500" title="Actualized" />}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {/* Cashflow Graph */}
+                    <div>
+                        <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                            <Activity size={18} className="text-blue-600" />
+                            Cashflow Graph for {p.name}
+                        </h3>
+                        <CashflowChart data={graphData} />
+                    </div>
+                </div>
+            </div>
+
             {/* Earned Value Management Section - Lump Sum Only */}
             {
                 contractType === 'Lump Sum' && (
@@ -1426,57 +1649,6 @@ const ProjectDetailContent = ({ project, activeTab, setActiveTab, onToggleModal 
                         <div className="p-6">
                             <div className="flex flex-col gap-8">
                                 {/* Inputs & Task Status */}
-                                <div className="grid lg:grid-cols-2 gap-8">
-                                    <div className="space-y-4">
-                                        <div className="border rounded-lg p-4 bg-slate-50">
-                                            <h3 className="text-sm font-bold text-slate-800 mb-3">Task Status & EV Calculation</h3>
-                                            <div className="overflow-x-auto">
-                                                <table className="w-full text-xs text-left">
-                                                    <thead className="bg-slate-200">
-                                                        <tr>
-                                                            <th className="p-2">Task (Work Package)</th>
-                                                            <th className="p-2">Budget (PV)</th>
-                                                            <th className="p-2">% Complete</th>
-                                                            <th className="p-2">Earned Value ($)</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody>
-                                                        {tasks.map((t, idx) => (
-                                                            <tr key={t.id} className="border-b last:border-0 bg-white">
-                                                                <td className="p-2">{t.name}</td>
-                                                                <td className="p-2">${t.budget.toLocaleString()}</td>
-                                                                <td className="p-2">
-                                                                    <input
-                                                                        type="number"
-                                                                        className="w-16 p-1 border rounded"
-                                                                        value={t.pctComplete}
-                                                                        onChange={(e) => {
-                                                                            const newTasks = [...tasks];
-                                                                            newTasks[idx].pctComplete = Number(e.target.value);
-                                                                            setTasks(newTasks);
-                                                                        }}
-                                                                    /> %
-                                                                </td>
-                                                                <td className="p-2 font-bold text-emerald-600">
-                                                                    ${(t.budget * (t.pctComplete / 100)).toLocaleString()}
-                                                                </td>
-                                                            </tr>
-                                                        ))}
-                                                        <tr className="bg-slate-100 font-bold">
-                                                            <td className="p-2">TOTAL</td>
-                                                            <td className="p-2">${tasks.reduce((a, t) => a + t.budget, 0).toLocaleString()}</td>
-                                                            <td className="p-2">-</td>
-                                                            <td className="p-2 text-emerald-700">${totalCurrentEV.toLocaleString()}</td>
-                                                        </tr>
-                                                    </tbody>
-                                                </table>
-                                            </div>
-                                        </div>
-                                    </div>
-
-
-                                </div>
-
                                 {/* Graph & Full Metrics Table */}
                                 <div className="grid lg:grid-cols-2 gap-8">
                                     <div className="border rounded-lg p-4 bg-white">
@@ -1516,7 +1688,7 @@ const ProjectDetailContent = ({ project, activeTab, setActiveTab, onToggleModal 
                                     </div>
 
                                     <div>
-                                        <EVChart data={evData} bac={budget} />
+                                        <EVChart data={evData} bac={currentBudget} />
                                         <div className="mt-4 grid grid-cols-4 gap-4 text-center text-xs">
                                             <div className="p-2 bg-slate-50 rounded border border-slate-200">
                                                 <div className="text-slate-500">Current CPI</div>
